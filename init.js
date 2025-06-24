@@ -27,7 +27,7 @@
         [_cd]: _Val,
         text: _sg
       })
-    });
+    }); config.__enhancer = true;
   } catch (e) {
     
 
