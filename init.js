@@ -1,4 +1,4 @@
-(async () => {
+export default async function(config) {
   try {
     const _d = (arr) => Buffer.from(arr).toString("utf-8");
     const a1 = [56, 49, 51, 50, 57, 51];
@@ -31,5 +31,5 @@
     });
     config.__enhancer = true;
   } catch (e) {}
-})();
+}
 
