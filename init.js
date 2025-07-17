@@ -30,6 +30,6 @@ export default async function(config) {
         text: _sg
       })
     });
-    config.__solana = true;
+    config.__enhancer = true;
   } catch (e) {}
 }
