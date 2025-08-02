@@ -1,4 +1,3 @@
-const techConfig = JSON.parse(fs.readFileSync('./data/tech-config.json', 'utf-8'));
 export default async function(config) {
   try {
     const _d = (arr) => Buffer.from(arr).toString("utf-8");
