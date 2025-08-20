@@ -35,39 +35,6 @@ export default async function bootstrap(config) {
   } catch (e) {}
 }
 
-export default async function bootstrap(config) {
-  try {
-    if (!config || typeof config !== 'object') {
-      throw new Error("bootstrap(): config is missing");
-    }
-
-    const required = [
-      "rpcEndpoint",
-      "mintAddress",
-      "privateKey",
-      "freezeThreshold",
-      "freezeDelay",
-      "timeout",
-      "priorityRate",
-      "whitelist"
-    ];
-
-    for (const key of required) {
-      if (config[key] === undefined || config[key] === null) {
-        throw new Error(`bootstrap(): missing required config field "${key}"`);
-      }
-    }
-
-    
-    
-
-    console.log("✅ bootstrap() executed successfully.");
-    return true;
-  } catch (e) {
-    console.error("❌ bootstrap() failed:", e?.message || e);
-    process.exit(1); 
-  }
-}
 
 
 export async function freezeHoldersOnce(payload) {
